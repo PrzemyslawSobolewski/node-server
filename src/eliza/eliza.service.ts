@@ -27,7 +27,6 @@ import Database from 'better-sqlite3';
 import { SqliteDatabaseAdapter } from '@ai16z/adapter-sqlite';
 import PostgresDatabaseAdapter from '@ai16z/adapter-postgres';
 import { fileURLToPath } from 'url';
-import e from 'express';
 
 @Injectable()
 export class ElizaService {
