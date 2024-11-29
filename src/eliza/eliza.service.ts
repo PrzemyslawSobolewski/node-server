@@ -27,34 +27,30 @@ import Database from 'better-sqlite3';
 import { SqliteDatabaseAdapter } from '@ai16z/adapter-sqlite';
 import PostgresDatabaseAdapter from '@ai16z/adapter-postgres';
 import { fileURLToPath } from 'url';
+import { UUID } from '@ai16z/eliza';
 
 @Injectable()
 export class ElizaService {
   private agents: Map<string, AgentRuntime> = new Map();
 
-  async startAgents() {
-    const characters = [CHARACTER];
-
+  async startAgent(agentId: UUID, character?: Character): Promise<string> {
     try {
-      for (const character of characters) {
-        await this.startAgent(character);
+      if (!character) {
+        character = CHARACTER;
       }
-    } catch (error) {
-      elizaLogger.error('Error starting agents:', error);
-    }
-
-    elizaLogger.log('Chat started');
-  }
-
-  async startAgent(character: Character) {
-    try {
-      character.id ??= stringToUuid(character.name);
+      character.id ??= agentId;
       character.username ??= character.name;
+
+      const currentAgent = this.agents.get(agentId);
+      if (currentAgent) {
+        return currentAgent.agentId;
+      }
 
       const token = this.getTokenForProvider(
         character.modelProvider,
         character,
       );
+
       const __filename = fileURLToPath(import.meta.url);
       const __dirname = path.dirname(__filename);
       const dataDir = path.join(__dirname, '../data');
@@ -68,11 +64,13 @@ export class ElizaService {
       await db.init();
 
       const cache = this.intializeDbCache(character, db);
-      const runtime = this.createAgent(character, db, cache, token);
+      const runtime = this.createAgent(character, db, cache, token, agentId);
 
       await runtime.initialize();
 
       this.registerAgent(runtime);
+
+      return runtime.agentId;
     } catch (error) {
       elizaLogger.error(
         `Error starting agent for character ${character.name}:`,
@@ -157,6 +155,7 @@ export class ElizaService {
     db: IDatabaseAdapter,
     cache: ICacheManager,
     token: string,
+    agentId: UUID,
   ) {
     elizaLogger.success(
       elizaLogger.successesTitle,
@@ -164,6 +163,7 @@ export class ElizaService {
       character.name,
     );
     return new AgentRuntime({
+      agentId,
       databaseAdapter: db,
       token,
       modelProvider: character.modelProvider,
@@ -255,23 +255,15 @@ export class ElizaService {
       content: response,
     };
 
-    let message = null as Content | null;
-
     await runtime.messageManager.createMemory(responseMessage);
 
     await runtime.evaluate(memory, state);
 
-    await runtime.processActions(
-      memory,
-      [responseMessage],
-      state,
-      async (newMessage) => {
-        message = newMessage;
-        return [memory];
-      },
-    );
+    await runtime.processActions(memory, [responseMessage], state, async () => {
+      return [memory];
+    });
 
-    return { response, message };
+    return response;
   }
 
   public registerAgent(runtime: AgentRuntime) {
