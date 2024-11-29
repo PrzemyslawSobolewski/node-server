@@ -37,6 +37,11 @@ export class ElizaService {
     try {
       if (!character) {
         character = CHARACTER;
+      } else {
+        character = {
+          ...CHARACTER,
+          ...character,
+        };
       }
       character.id ??= agentId;
       character.username ??= character.name;
