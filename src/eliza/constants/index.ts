@@ -1,9 +1,7 @@
-import {
-  Character,
-  defaultCharacter,
-  messageCompletionFooter,
-  ModelProviderName,
-} from '@ai16z/eliza';
+import { Character, defaultCharacter, ModelProviderName } from '@ai16z/eliza';
+
+export const messageCompletionFooter =
+  '\nResponse format should be formatted in a JSON block like this:\n```json\n{"text": string, "user": "{{agentName}}", "action": "string" }\n```\n "text" field should always start from "START###" and end with "###END".';
 
 export const MESSAGE_HANDLER_TEMPLATE =
   // {{goals}}

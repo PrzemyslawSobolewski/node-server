@@ -1,14 +1,9 @@
-import {
-  Body,
-  Controller,
-  Param,
-  Post,
-  InternalServerErrorException,
-} from '@nestjs/common';
+import { Body, Controller, Param, Post, Res } from '@nestjs/common';
 import { ElizaService } from './eliza.service.js';
 import { MessageRequestDto } from './dto/message-request.dto.js';
 import { StartRequestDto } from './dto/start-request.dto.js';
 import { UUID } from '@ai16z/eliza';
+import { Response } from 'express';
 
 @Controller(':agentId')
 export class ElizaController {
@@ -33,18 +28,30 @@ export class ElizaController {
   async handleMessage(
     @Param('agentId') agentId: string,
     @Body() messageRequest: MessageRequestDto,
+    @Res() res: Response,
   ) {
-    const response = await this.elizaService.processMessage(
-      agentId,
-      messageRequest,
-    );
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
 
-    if (!response) {
-      throw new InternalServerErrorException(
-        'No response from generateMessageResponse',
+    const sendChunk = (chunk: string) => {
+      if (chunk) {
+        res.write(`data: ${chunk}\n\n`);
+      }
+    };
+
+    try {
+      await this.elizaService.processMessageStream(
+        agentId,
+        messageRequest,
+        sendChunk,
       );
-    }
 
-    return response;
+      res.write(`data: ###END###\n\n`);
+      res.end();
+    } catch (error) {
+      console.error('Error while streaming messages:', error);
+      res.end();
+    }
   }
 }

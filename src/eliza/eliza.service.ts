@@ -5,7 +5,6 @@ import {
   Memory,
   ModelClass,
   composeContext,
-  generateMessageResponse,
   stringToUuid,
   AgentRuntime,
   elizaLogger,
@@ -17,6 +16,8 @@ import {
   ICacheManager,
   ModelProviderName,
   settings,
+  State,
+  parseJSONObjectFromText,
 } from '@ai16z/eliza';
 import { CHARACTER, MESSAGE_HANDLER_TEMPLATE } from './constants/index.js';
 import { bootstrapPlugin } from '@ai16z/plugin-bootstrap';
@@ -28,6 +29,7 @@ import { SqliteDatabaseAdapter } from '@ai16z/adapter-sqlite';
 import PostgresDatabaseAdapter from '@ai16z/adapter-postgres';
 import { fileURLToPath } from 'url';
 import { UUID } from '@ai16z/eliza';
+import { generateMessageResponseSSE } from './utils/generate.js';
 
 @Injectable()
 export class ElizaService {
@@ -183,7 +185,11 @@ export class ElizaService {
     });
   }
 
-  async processMessage(agentId: string, request: MessageRequestDto) {
+  async processMessageStream(
+    agentId: string,
+    request: MessageRequestDto,
+    sendChunk: (chunk: string) => void,
+  ) {
     let runtime = this.agents.get(agentId);
 
     if (!runtime) {
@@ -244,21 +250,38 @@ export class ElizaService {
       template: MESSAGE_HANDLER_TEMPLATE,
     });
 
-    const response = await generateMessageResponse({
+    const responseText = await generateMessageResponseSSE({
       runtime,
       context,
       modelClass: ModelClass.SMALL,
+      sendChunk,
     });
+
+    const response = parseJSONObjectFromText(responseText) as Content;
 
     if (!response) {
       return null;
     }
 
+    await this.updateMemory(userMessage, runtime, response, memory, state);
+
+    return response;
+  }
+
+  async updateMemory(
+    userMessage: any,
+    runtime: AgentRuntime,
+    response: Content,
+    memory: Memory,
+    state: State,
+  ) {
     const responseMessage = {
       ...userMessage,
       userId: runtime.agentId,
       content: response,
     };
+
+    elizaLogger.log('Creating memory for response message:', responseMessage);
 
     await runtime.messageManager.createMemory(responseMessage);
 
@@ -267,8 +290,6 @@ export class ElizaService {
     await runtime.processActions(memory, [responseMessage], state, async () => {
       return [memory];
     });
-
-    return response;
   }
 
   public registerAgent(runtime: AgentRuntime) {
