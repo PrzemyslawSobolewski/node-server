@@ -98,19 +98,20 @@ export class SceneService {
 
   async getSceneState(req: UpdateSceneRequestDto, userID: string) {
     const scene = await this.sceneModel
-      .findOne({ ID: this.toObjectId(req.SceneID) })
+      .findOne({ ID: this.toObjectId(req.sceneID) })
       .lean();
     if (!scene) throw new Error('Scene not found');
     const collectionName = scene.CollectionName;
     if (!collectionName) throw new Error('Invalid scene collection name');
     // const objects = await this.connection.collection(collectionName).find({}).toArray();
-    // delete scene._id;
-    // delete scene.ConversationHistory;
+    delete scene._id;
+    delete scene.ConversationHistory;
+    delete scene.Collaborators;
     return {
       userID,
-      userToken: req.UserToken,
+      userToken: req.userToken,
       metadata: scene,
-      operations: req.Operations,
+      operations: req.operations,
       // objects,
     };
   }

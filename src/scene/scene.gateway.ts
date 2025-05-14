@@ -26,6 +26,7 @@ export class SceneGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   // Map<sceneID, Set<client.id>>
   private rooms = new Map<string, Set<string>>();
+  private userTokens = new Map<string, { userToken: string; userID: string }>();
 
   constructor(private readonly sceneService: SceneService) {}
 
@@ -54,6 +55,24 @@ export class SceneGateway implements OnGatewayConnection, OnGatewayDisconnect {
     for (const [sceneID, clients] of this.rooms.entries()) {
       if (clients.has(client.id)) {
         clients.delete(client.id);
+        const info = this.userTokens.get(client.id);
+        const userToken = info?.userToken;
+        const userID = info?.userID;
+        this.userTokens.delete(client.id);
+        if (userToken) {
+          const editOps = await this.sceneService.clearUserSelections(
+            sceneID,
+            userToken,
+          );
+
+          if (editOps && editOps.length > 0) {
+            this.server.to(sceneID).emit('userDisconnected', {
+              userID,
+              userToken,
+              operations: editOps,
+            });
+          }
+        }
         if (clients.size === 0) {
           this.rooms.delete(sceneID);
           await this.sceneService.clearAllSelections(sceneID);
@@ -75,6 +94,7 @@ export class SceneGateway implements OnGatewayConnection, OnGatewayDisconnect {
       client.disconnect();
       return;
     }
+
     // Check if user is allowed to join the scene
     const allowed = await this.sceneService.checkDocCollaborator(
       sceneID,
@@ -88,29 +108,42 @@ export class SceneGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     client.join(sceneID);
+    this.userTokens.set(client.id, { userToken, userID: user.uid });
     if (!this.rooms.has(sceneID)) this.rooms.set(sceneID, new Set());
     this.rooms.get(sceneID).add(client.id);
 
+    let editOps = [];
+    if (userToken) {
+      editOps = await this.sceneService.clearUserSelections(sceneID, userToken);
+    }
     // Broadcast to all clients in the room
     this.server.to(sceneID).emit('userConnected', {
       userID: user.uid,
       userToken,
+      operations: editOps,
     });
   }
+
+  // Debounce map: Map<client.id, { timeout: NodeJS.Timeout, ops: UpdateSceneRequestDto[] }>
+  private updateDebounce = new Map<
+    string,
+    { timeout: NodeJS.Timeout; ops: UpdateSceneRequestDto[] }
+  >();
 
   @SubscribeMessage('update')
   async handleUpdate(
     @MessageBody() req: UpdateSceneRequestDto,
     @ConnectedSocket() client: Socket,
   ) {
-    const { SceneID, UserToken, AuthToken } = req;
-    const user = await this.sceneService.verifyUserToken(AuthToken);
+    const { sceneID, userToken, authToken } = req;
+    const user = await this.sceneService.verifyUserToken(authToken);
     if (!user) {
       client.emit('error', { code: 401, msg: 'Unauthorized' });
       return;
     }
+
     const allowed = await this.sceneService.checkDocCollaborator(
-      SceneID,
+      sceneID,
       user.uid,
       user.email,
     );
@@ -119,46 +152,43 @@ export class SceneGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
 
-    try {
-      await this.sceneService.applyCRDTOperations(
-        SceneID,
-        req.Operations,
-        user.uid,
-      );
-    } catch (e) {
-      client.emit('error', { code: 500, msg: e.message });
-      return;
+    const debounceTime = 20; // ms
+    if (!this.updateDebounce.has(client.id)) {
+      this.updateDebounce.set(client.id, { timeout: null, ops: [] });
     }
+    const entry = this.updateDebounce.get(client.id);
+    entry.ops.push(req);
 
-    const state = await this.sceneService.getSceneState(req, user.uid);
+    if (entry.timeout) clearTimeout(entry.timeout);
 
-    this.server.to(SceneID).emit('sceneUpdated', {
-      code: 0,
-      msg: 'Scene updated successfully!',
-      data: state,
-    });
-  }
+    entry.timeout = setTimeout(async () => {
+      // Merge all operations from ops array
+      const mergedOps = entry.ops
+        .flatMap((r) => r.operations || [])
+        .sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
 
-  @SubscribeMessage('disconnecting')
-  async handleDisconnecting(
-    @ConnectedSocket() client: Socket,
-    @MessageBody()
-    data: { sceneID: string; userToken: string; authToken: string },
-  ) {
-    const { sceneID, userToken, authToken } = data;
-    /*const user = await this.sceneService.verifyUserToken(authToken);
-    if (user) {
-      const editOps = await this.sceneService.clearUserSelections(
-        sceneID,
-        userToken,
-      );
-      if (editOps && editOps.length > 0) {
-        this.server.to(sceneID).emit('userDisconnected', {
-          userID: user.uid,
-          userToken,
-          operations: editOps,
-        });
+      req.operations = mergedOps;
+      try {
+        await this.sceneService.applyCRDTOperations(
+          sceneID,
+          mergedOps,
+          user.uid,
+        );
+      } catch (e) {
+        client.emit('error', { code: 500, msg: e.message });
+        this.updateDebounce.delete(client.id);
+        return;
       }
-    }*/
+
+      const state = await this.sceneService.getSceneState(req, user.uid);
+
+      this.server.to(sceneID).emit('sceneUpdated', {
+        code: 0,
+        msg: 'Scene updated successfully!',
+        data: state,
+      });
+
+      this.updateDebounce.delete(client.id);
+    }, debounceTime);
   }
 }

@@ -16,6 +16,19 @@ export class Scene extends Document {
 
   @Prop([String])
   Collaborators: string[];
+
+  @Prop({
+    type: Map,
+    of: { type: Map, of: [{ role: String, content: String }] },
+  })
+  ConversationHistory: {
+    [conversationId: string]: {
+      [roomId: string]: Array<{
+        role: string;
+        content: string;
+      }>;
+    };
+  };
 }
 
 export const SceneSchema = SchemaFactory.createForClass(Scene);

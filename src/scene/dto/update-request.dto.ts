@@ -4,12 +4,13 @@ export class CRDTOperationDto {
   uuid?: string;
   diff?: any;
   parent?: string;
+  timestamp?: number;
 }
 
 export class UpdateSceneRequestDto {
-  SceneID: string;
-  SceneUUID: string;
-  Operations: CRDTOperationDto[];
-  UserToken: string;
-  AuthToken: string;
+  sceneID: string;
+  sceneUUID: string;
+  operations: CRDTOperationDto[];
+  userToken: string;
+  authToken: string;
 }
